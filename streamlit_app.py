@@ -14,8 +14,8 @@ from app.builders import (
     build_student_roster,
 )
 
-DEFAULT_ROSTER_TEMPLATE = "2025학년도 학생일람표_4학년4반.xlsx"
-DEFAULT_VEHICLE_TEMPLATE = "등하교 차량 (4-4).xlsx"
+DEFAULT_ROSTER_TEMPLATE = "template_roster.xlsx"
+DEFAULT_VEHICLE_TEMPLATE = "template_dropoff.xlsx"
 
 
 def _safe_secret(key, default=""):

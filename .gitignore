@@ -10,6 +10,9 @@ __pycache__/
 *.xls
 *.csv
 *.ods
+!template_roster.xlsx
+!template_dropoff.xlsx
+!template_boarding.xlsx
 
 # Temporary outputs
 _out*.xlsx
