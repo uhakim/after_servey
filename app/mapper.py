@@ -29,6 +29,17 @@ def _first_value(row, indices):
     return None
 
 
+def _norm_header(h):
+    s = str(h or "").lower()
+    s = re.sub(r"[\s_()\-.,]", "", s)
+    return s
+
+
+def _h_has(h, *tokens):
+    hs = _norm_header(h)
+    return all(t in hs for t in tokens)
+
+
 def _parse_number(value):
     if value in (None, ""):
         return None
@@ -49,30 +60,79 @@ def _parse_day_segments(headers):
     day_loc2 = {}
     day_loc3 = {}
 
-    day_starts = []
+    day_anchors = []
     for day in WEEKDAYS:
-        idx = _first_idx(headers, f"({day})_하교 방법")
-        if idx is not None:
-            day_starts.append((day, idx))
-            day_method[day] = idx
-            day_time[day] = _first_idx(headers, f"하교시간을 선택해주세요.({day})")
-            s = DAY_SHORT[day]
-            day_vehicle2[day] = _first_idx(headers, f"탑승 차량을 선택해주세요.({s}, 2하교)")
-            day_vehicle3[day] = _first_idx(headers, f"탑승 차량을 선택해주세요.({s}, 3하교)")
+        idx_method = None
+        idx_time = None
+        for i, h in enumerate(headers):
+            hs = _norm_header(h)
+            if day in str(h or "") and ("하교방법" in hs or ("하교" in hs and "방법" in hs)):
+                idx_method = i
+                break
+        for i, h in enumerate(headers):
+            hs = _norm_header(h)
+            if day in str(h or "") and ("하교시간" in hs or ("하교" in hs and "시간" in hs)):
+                idx_time = i
+                break
 
-    day_starts.sort(key=lambda x: x[1])
-    for i, (day, start_idx) in enumerate(day_starts):
-        next_start = day_starts[i + 1][1] if i + 1 < len(day_starts) else len(headers)
-        v2 = day_vehicle2.get(day)
-        v3 = day_vehicle3.get(day)
-        if v2 is not None:
-            day_loc2[day] = list(range(v2 + 1, v3 if v3 is not None else next_start))
+        if idx_method is not None:
+            day_method[day] = idx_method
+        if idx_time is not None:
+            day_time[day] = idx_time
+
+        anchor = idx_method if idx_method is not None else idx_time
+        if anchor is not None:
+            day_anchors.append((day, anchor))
+
+    day_anchors.sort(key=lambda x: x[1])
+    for i, (day, start_idx) in enumerate(day_anchors):
+        next_start = day_anchors[i + 1][1] if i + 1 < len(day_anchors) else len(headers)
+        rng = list(range(start_idx, next_start))
+
+        veh_candidates = []
+        loc_candidates = []
+        for c in rng:
+            hs = _norm_header(headers[c])
+            if "차량" in hs:
+                veh_candidates.append(c)
+            if ("장소" in hs) or ("하차" in hs):
+                loc_candidates.append(c)
+
+        v2 = None
+        v3 = None
+        for c in veh_candidates:
+            hs = _norm_header(headers[c])
+            if "2하교" in hs and v2 is None:
+                v2 = c
+            if "3하교" in hs and v3 is None:
+                v3 = c
+
+        # Fallback: if explicit 2/3 markers are missing, pick in-order vehicle columns.
+        if v2 is None and veh_candidates:
+            v2 = veh_candidates[0]
+        if v3 is None and len(veh_candidates) >= 2:
+            v3 = veh_candidates[1]
+        elif v3 is None:
+            v3 = v2
+
+        day_vehicle2[day] = v2
+        day_vehicle3[day] = v3
+
+        if v2 is not None and v3 is not None and v2 <= v3:
+            loc2 = [c for c in range(v2 + 1, v3) if c in loc_candidates]
+            loc3 = [c for c in range(v3 + 1, next_start) if c in loc_candidates]
         else:
-            day_loc2[day] = []
-        if v3 is not None:
-            day_loc3[day] = list(range(v3 + 1, next_start))
-        else:
-            day_loc3[day] = []
+            loc2 = []
+            loc3 = []
+
+        # Fallback: use all location candidates in day range when segmented locations are not found.
+        if not loc2:
+            loc2 = loc_candidates[:]
+        if not loc3:
+            loc3 = loc_candidates[:]
+
+        day_loc2[day] = loc2
+        day_loc3[day] = loc3
 
     return day_method, day_time, day_vehicle2, day_vehicle3, day_loc2, day_loc3
 
