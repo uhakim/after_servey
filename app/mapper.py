@@ -46,6 +46,15 @@ def _norm_header(h):
     return s
 
 
+def _all_idx_by_tokens(headers, include_tokens):
+    out = []
+    for i, h in enumerate(headers):
+        hs = _norm_header(h)
+        if all(t in hs for t in include_tokens):
+            out.append(i)
+    return out
+
+
 def _parse_number(value):
     if value in (None, ""):
         return None
@@ -167,7 +176,7 @@ def build_student_records(ws):
         "main_parent_phone": _first_idx(headers, "주 학부모전화번호"),
     }
 
-    boarding_loc_indices = _all_idx(headers, "(등교)승차 장소를 선택해주세요")
+    boarding_loc_indices = _all_idx_by_tokens(headers, ["등교", "승차", "장소"])
     day_method, day_time, day_vehicle_by_time, day_loc_by_time = _parse_day_segments(headers)
 
     records = []
