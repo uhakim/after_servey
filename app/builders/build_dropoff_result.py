@@ -1,4 +1,5 @@
 ﻿from io import BytesIO
+import os
 
 import openpyxl
 from openpyxl.styles import PatternFill, Border, Side
@@ -54,7 +55,13 @@ def _read_roster_order_from_template(template_bytes=None, default_template_path=
     if not template_bytes and not default_template_path:
         return []
 
-    wb = openpyxl.load_workbook(BytesIO(template_bytes)) if template_bytes else openpyxl.load_workbook(default_template_path)
+    if template_bytes:
+        wb = openpyxl.load_workbook(BytesIO(template_bytes))
+    else:
+        if not default_template_path or not os.path.exists(default_template_path):
+            return []
+        wb = openpyxl.load_workbook(default_template_path)
+
     if "명단" not in wb.sheetnames:
         return []
 
@@ -125,7 +132,6 @@ def build_dropoff_result(records, template_bytes=None, default_template_path=Non
             for c in cols:
                 ws_result.cell(r, c).fill = fill
 
-    # Draw full grid borders with normal thin lines.
     thin = Side(style="thin", color="000000")
     grid = Border(left=thin, right=thin, top=thin, bottom=thin)
     for r in range(1, ws_result.max_row + 1):

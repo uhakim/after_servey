@@ -1,17 +1,56 @@
 ﻿from io import BytesIO
 import datetime as dt
+import os
 import re
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 
 
+def _build_default_roster_template():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "4-4"
+
+    ws.merge_cells("A1:J1")
+    ws["A1"] = "2026학년도 동성초등학교 학생일람표"
+    ws.merge_cells("A2:B2")
+    ws.merge_cells("C2:G2")
+    ws["A2"] = "남"
+    ws["C2"] = "    4학년      4반     담임  : "
+
+    ws["A3"] = "번\n호"
+    ws["B3"] = "성   명"
+    ws["C3"] = "생년월일"
+    ws["D3"] = "주소(도로명주소)"
+    ws["E3"] = "보호자"
+    ws["G3"] = "연락처"
+    ws["I3"] = "형제\n관계"
+    ws["J3"] = "학교\n등교차"
+    ws["E4"] = "부"
+    ws["F4"] = "모"
+    ws["G4"] = "부"
+    ws["H4"] = "모"
+
+    ws.merge_cells("A25:B25")
+    ws["A25"] = "여"
+
+    for n in range(1, 21):
+        ws.cell(4 + n, 1).value = n
+    for n in range(41, 61):
+        ws.cell(n - 13, 1).value = n
+
+    for c, w in [(1, 6), (2, 10), (3, 14), (4, 42), (5, 10), (6, 10), (7, 14), (8, 14), (9, 14), (10, 12)]:
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
+    return wb
+
+
 def _load_workbook(template_bytes=None, default_path=None):
     if template_bytes:
         return openpyxl.load_workbook(BytesIO(template_bytes))
-    if default_path:
+    if default_path and os.path.exists(default_path):
         return openpyxl.load_workbook(default_path)
-    raise ValueError("템플릿 파일이 필요합니다.")
+    return _build_default_roster_template()
 
 
 def _replace_school_year(ws, school_year):
@@ -42,7 +81,6 @@ def _normalize_address(addr):
     s = re.sub(r"\s+", " ", s)
     s = s.replace("부산시 ", "부산광역시 ")
     s = s.replace("부산시", "부산광역시")
-    # If city is omitted and address starts with district, prepend Busan metro city.
     if re.match(r"^[가-힣]+구\b", s):
         s = "부산광역시 " + s
     return s
@@ -116,9 +154,6 @@ def build_student_roster(records, school_year, template_bytes=None, default_temp
 
     _replace_school_year(ws, school_year)
 
-    # Gender block labels by school year parity.
-    # Even year: top block=남, bottom block=여
-    # Odd year:  top block=여, bottom block=남
     if int(school_year) % 2 == 0:
         ws.cell(2, 1).value = "남"
         ws.cell(25, 1).value = "여"
