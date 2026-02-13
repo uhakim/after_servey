@@ -1,0 +1,15 @@
+﻿# Python cache
+__pycache__/
+*.py[cod]
+
+# Local secrets / API keys
+.streamlit/secrets.toml
+
+# Personal/operational data files
+*.xlsx
+*.xls
+*.csv
+*.ods
+
+# Temporary outputs
+_out*.xlsx
