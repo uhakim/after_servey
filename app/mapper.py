@@ -55,6 +55,23 @@ def _all_idx_by_tokens(headers, include_tokens):
     return out
 
 
+def _boarding_loc_indices(headers, idx_boarding_vehicle, day_method):
+    # 1) direct match: headers explicitly mentioning 등교+승차+장소
+    direct = _all_idx_by_tokens(headers, ["등교", "승차", "장소"])
+    if direct:
+        return direct
+
+    # 2) fallback: location-like columns in boarding section (between 등교차량 and first 하교 block)
+    first_day_start = min(day_method.values()) if day_method else len(headers)
+    start = (idx_boarding_vehicle + 1) if idx_boarding_vehicle is not None else 0
+    out = []
+    for i in range(start, first_day_start):
+        hs = _norm_header(headers[i])
+        if ("장소" in hs or "승차지" in hs) and ("하차" not in hs):
+            out.append(i)
+    return out
+
+
 def _parse_number(value):
     if value in (None, ""):
         return None
@@ -176,8 +193,8 @@ def build_student_records(ws):
         "main_parent_phone": _first_idx(headers, "주 학부모전화번호"),
     }
 
-    boarding_loc_indices = _all_idx_by_tokens(headers, ["등교", "승차", "장소"])
     day_method, day_time, day_vehicle_by_time, day_loc_by_time = _parse_day_segments(headers)
+    boarding_loc_indices = _boarding_loc_indices(headers, idx["boarding_vehicle"], day_method)
 
     records = []
     errors = []
