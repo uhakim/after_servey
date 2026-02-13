@@ -3,7 +3,6 @@
 from .normalizer import clean_choice_prefix, normalize_date, normalize_phone
 
 WEEKDAYS = ["월요일", "화요일", "수요일", "목요일", "금요일"]
-DAY_SHORT = {"월요일": "월", "화요일": "화", "수요일": "수", "목요일": "목", "금요일": "금"}
 
 
 def _contains(text, token):
@@ -23,9 +22,21 @@ def _all_idx(headers, token):
 
 def _first_value(row, indices):
     for idx in indices:
+        if idx is None or idx < 0 or idx >= len(row):
+            continue
         v = row[idx]
         if v not in (None, ""):
             return v
+    return None
+
+
+def _first_nonempty_index(row, indices):
+    for idx in indices:
+        if idx is None or idx < 0 or idx >= len(row):
+            continue
+        v = row[idx]
+        if v not in (None, ""):
+            return idx
     return None
 
 
@@ -33,11 +44,6 @@ def _norm_header(h):
     s = str(h or "").lower()
     s = re.sub(r"[\s_()\-.,]", "", s)
     return s
-
-
-def _h_has(h, *tokens):
-    hs = _norm_header(h)
-    return all(t in hs for t in tokens)
 
 
 def _parse_number(value):
@@ -52,23 +58,31 @@ def _parse_number(value):
         return None
 
 
+def _parse_time_num(text):
+    s = str(text or "")
+    m = re.search(r"([123])\s*하교", s)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def _parse_day_segments(headers):
     day_method = {}
     day_time = {}
-    day_vehicle2 = {}
-    day_vehicle3 = {}
-    day_loc2 = {}
-    day_loc3 = {}
+    day_vehicle_by_time = {d: {} for d in WEEKDAYS}
+    day_loc_by_time = {d: {} for d in WEEKDAYS}
 
     day_anchors = []
     for day in WEEKDAYS:
         idx_method = None
         idx_time = None
+
         for i, h in enumerate(headers):
             hs = _norm_header(h)
             if day in str(h or "") and ("하교방법" in hs or ("하교" in hs and "방법" in hs)):
                 idx_method = i
                 break
+
         for i, h in enumerate(headers):
             hs = _norm_header(h)
             if day in str(h or "") and ("하교시간" in hs or ("하교" in hs and "시간" in hs)):
@@ -85,6 +99,7 @@ def _parse_day_segments(headers):
             day_anchors.append((day, anchor))
 
     day_anchors.sort(key=lambda x: x[1])
+
     for i, (day, start_idx) in enumerate(day_anchors):
         next_start = day_anchors[i + 1][1] if i + 1 < len(day_anchors) else len(headers)
         rng = list(range(start_idx, next_start))
@@ -98,43 +113,38 @@ def _parse_day_segments(headers):
             if ("장소" in hs) or ("하차" in hs):
                 loc_candidates.append(c)
 
-        v2 = None
-        v3 = None
+        # Explicit mapping from header, e.g. (화,1하교), (수,2하교), (목,3하교)
         for c in veh_candidates:
             hs = _norm_header(headers[c])
-            if "2하교" in hs and v2 is None:
-                v2 = c
-            if "3하교" in hs and v3 is None:
-                v3 = c
+            m = re.search(r"([123])하교", hs)
+            if m:
+                t = int(m.group(1))
+                if t not in day_vehicle_by_time[day]:
+                    day_vehicle_by_time[day][t] = c
 
-        # Fallback: if explicit 2/3 markers are missing, pick in-order vehicle columns.
-        if v2 is None and veh_candidates:
-            v2 = veh_candidates[0]
-        if v3 is None and len(veh_candidates) >= 2:
-            v3 = veh_candidates[1]
-        elif v3 is None:
-            v3 = v2
+        # If no explicit time marker exists, map in order to available times.
+        if not day_vehicle_by_time[day] and veh_candidates:
+            for t, c in zip([1, 2, 3], veh_candidates[:3]):
+                day_vehicle_by_time[day][t] = c
 
-        day_vehicle2[day] = v2
-        day_vehicle3[day] = v3
+        # Build location candidates for each mapped vehicle slot.
+        sorted_v = sorted(day_vehicle_by_time[day].items(), key=lambda x: x[1])
+        if sorted_v:
+            for j, (t, vc) in enumerate(sorted_v):
+                next_vc = sorted_v[j + 1][1] if j + 1 < len(sorted_v) else next_start
+                locs = [x for x in range(vc + 1, next_vc) if x in loc_candidates]
+                if not locs:
+                    locs = loc_candidates[:]
+                day_loc_by_time[day][t] = locs
 
-        if v2 is not None and v3 is not None and v2 <= v3:
-            loc2 = [c for c in range(v2 + 1, v3) if c in loc_candidates]
-            loc3 = [c for c in range(v3 + 1, next_start) if c in loc_candidates]
-        else:
-            loc2 = []
-            loc3 = []
+        # Global day-level fallback
+        for t in (1, 2, 3):
+            if t not in day_vehicle_by_time[day] and veh_candidates:
+                day_vehicle_by_time[day][t] = veh_candidates[0]
+            if t not in day_loc_by_time[day]:
+                day_loc_by_time[day][t] = loc_candidates[:]
 
-        # Fallback: use all location candidates in day range when segmented locations are not found.
-        if not loc2:
-            loc2 = loc_candidates[:]
-        if not loc3:
-            loc3 = loc_candidates[:]
-
-        day_loc2[day] = loc2
-        day_loc3[day] = loc3
-
-    return day_method, day_time, day_vehicle2, day_vehicle3, day_loc2, day_loc3
+    return day_method, day_time, day_vehicle_by_time, day_loc_by_time
 
 
 def build_student_records(ws):
@@ -158,7 +168,7 @@ def build_student_records(ws):
     }
 
     boarding_loc_indices = _all_idx(headers, "(등교)승차 장소를 선택해주세요")
-    day_method, day_time, day_vehicle2, day_vehicle3, day_loc2, day_loc3 = _parse_day_segments(headers)
+    day_method, day_time, day_vehicle_by_time, day_loc_by_time = _parse_day_segments(headers)
 
     records = []
     errors = []
@@ -200,14 +210,29 @@ def build_student_records(ws):
             location = ""
 
             if method == "학교차량이용":
-                if "2하교" in str(time):
-                    v_idx = day_vehicle2.get(day)
-                    vehicle = clean_choice_prefix(row[v_idx]) if v_idx is not None else ""
-                    location = clean_choice_prefix(_first_value(row, day_loc2.get(day, [])))
-                elif "3하교" in str(time):
-                    v_idx = day_vehicle3.get(day)
-                    vehicle = clean_choice_prefix(row[v_idx]) if v_idx is not None else ""
-                    location = clean_choice_prefix(_first_value(row, day_loc3.get(day, [])))
+                tnum = _parse_time_num(time)
+                v_idx = day_vehicle_by_time.get(day, {}).get(tnum) if tnum else None
+
+                # Fallback: use first non-empty vehicle among this day's candidates.
+                if v_idx is None or row[v_idx] in (None, ""):
+                    v_cands = []
+                    for vv in day_vehicle_by_time.get(day, {}).values():
+                        if vv not in v_cands:
+                            v_cands.append(vv)
+                    v_idx = _first_nonempty_index(row, v_cands) or v_idx
+
+                vehicle = clean_choice_prefix(row[v_idx]) if v_idx is not None else ""
+
+                loc_candidates = day_loc_by_time.get(day, {}).get(tnum, []) if tnum else []
+                if not loc_candidates:
+                    all_locs = []
+                    for locs in day_loc_by_time.get(day, {}).values():
+                        for x in locs:
+                            if x not in all_locs:
+                                all_locs.append(x)
+                    loc_candidates = all_locs
+
+                location = clean_choice_prefix(_first_value(row, loc_candidates))
 
             dropoff[day] = {"method": method, "time": time, "vehicle": vehicle, "location": location}
 
